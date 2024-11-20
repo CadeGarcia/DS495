@@ -1,0 +1,265 @@
+---
+title: "Tides_Bac_Code"
+author: Cade Garcia
+format: html
+editor: visual
+---
+
+# Loading in
+
+------------------------------------------------------------------------
+
+### Libraries
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(conflicted)
+library(plotly)
+library(ggpubr)
+library(janitor) 
+library(lubridate)
+library(gridExtra)
+```
+
+### Reading in Data
+
+```{r}
+Bac <- read_csv("Dataset in Github")
+Tides <- read_csv("Dataset in Github")
+```
+
+# Cleaning
+
+------------------------------------------------------------------------
+
+### Filtering Data 
+
+```{r}
+#> Reordering dates to Y/M/D for easier filtering
+Bac$`collection date` <- format(as.Date(Bac$`collection date`, format="%m/%d/%Y"),"%Y-%m-%d")
+
+#> Filtering Bacteria data for 2021-2024
+Bac_filtered <- Bac %>%
+  dplyr::filter(`collection date` >= 2021)
+
+#> Filtering Tide data for 2021-2024
+Tides_filtered <- Tides %>%
+  dplyr::filter(Date >= 2021)
+
+#> Converting dates from chr to POSIXct 
+Tides_filtered$`Date` <- as.POSIXct(Tides_filtered$`Date`, 
+                                    format = "%Y-%m-%d")
+
+Bac_filtered$`collection date` <- as.POSIXct(Bac_filtered$`collection date`, 
+                                             format = "%Y-%m-%d")
+```
+
+### Creating Data Set 
+
+```{r}
+Bac_means <- Bac_filtered %>%
+  mutate(Date = format(`collection date`, "%Y-%m")) %>%  # Extract Year-Month from the date
+  group_by(Date) %>%                        # Group by Year-Month
+  summarise(mean_bacteria = mean(`Enterococcus (mpn/100mL)`, na.rm = TRUE)) # Calculate the mean
+
+#> filtering out the unaligned (stray) date
+Bac_means <- Bac_means %>%
+  plotly::filter(`Date` != "2024-09")
+
+#> Create a new merged data set
+merged_data <- data.frame(
+  time = Tides_filtered$Date,
+  tide_levels = Tides_filtered$`MTL (ft)`,
+  bacteria_levels = Bac_means$mean_bacteria)
+
+#> Check the merged data set
+print(merged_data)
+```
+
+# Graphing 
+
+------------------------------------------------------------------------
+
+#### Exploratory Graphs
+
+```{r}
+#> Changing format for plotting
+merged_data$date <- as.Date(merged_data$time)
+class(merged_data$date)
+#summary(merged_data$date)
+
+
+# # # # TIDES # # # #
+
+#> TIDE levels over time (interpolated data!)
+tide_plot_old <- ggplot(merged_data) + 
+  geom_line(aes(x=date, y=tide_levels)) +
+  labs(title="Tide Levels Over time (original)", 
+       caption="Source: NOAA", 
+       x = "Date",
+       y= "Tide Levels") +
+  scale_x_date(date_breaks = "2 month", date_labels = "%b '%y", limits = as.Date(c("2021-01-01","2024-08-01")), expand = c(0, 44)) +
+  theme(axis.text.x = element_text(angle = 45))
+
+tide_plot_old
+
+#> Interactive Bacteria levels
+Tides_vis <- ggplot(merged_data, aes(x = time)) +
+  geom_line(aes(y = bacteria_levels)) +
+  labs(title = "Bacteria levels over time", x = "Date", y = "Bateria Levels") +
+  theme_classic()
+
+ggplotly(Tides_vis)
+
+# # # # BACTERIA # # # #
+
+#> Plotting raw Bacteria levels (from bacteria table)
+bac_plot_raw <- ggplot(Bac_filtered, aes(x = `collection date`, y = `Enterococcus (mpn/100mL)`)) +
+  geom_line() +
+  labs(title = "Bacteria Levels over time (raw data)", x = "Date collected", y = "Bacteria Levels") +
+  theme_minimal()
+
+bac_plot_raw
+
+#> How the bacteria levels move in relation to tide
+ggplot(merged_data, aes(x = time, y = tide_levels, color = bacteria_levels)) +
+  geom_line() +
+  stat_cor() +
+  labs(title = "Bacteria Levels in Relation to Bacteria Count", 
+       x = "Date collected", 
+       y = "Tide Levels") +
+  theme_classic()
+```
+
+### Relational Graphs
+
+```{r}
+#> Relation plot (Dot Plot)
+Relational_plot <- ggplot(merged_data, aes(x = tide_levels, y = bacteria_levels)) + 
+  geom_point() +
+  stat_cor() +
+  labs(title = "Relation Between Tides and Bacteria", 
+       x = "Bacteria Levels",
+       y = "Tide levels") +
+  theme_minimal()
+
+Relational_plot
+#ggsave("relational_plot.jpeg", plot = Relational_plot, width = 6, height = 4, dpi = 300)
+
+
+#> Boxplot for variability in Bacteria data 
+ggplot(merged_data, aes(y = bacteria_levels)) +
+  geom_boxplot() +
+  labs(title = "Variability of Bacteria data")
+
+#> Cutting off of the outlier 
+merged_data_plot <- merged_data %>% 
+  dplyr::filter(bacteria_levels < 750) %>% 
+  ggplot(aes(y = bacteria_levels)) +
+  geom_boxplot() +
+  labs(title = "Variability of Bacteria Data", y = "Bacteria levels") +
+  theme_minimal()
+
+merged_data_plot
+#ggsave("merged_data_plot.jpeg", plot = merged_data_plot, width = 6, height = 4, dpi = 300)
+```
+
+### Data Plots
+
+```{r}
+#> Bac levels over time (mean data!)
+bac_plot_mean <- ggplot(merged_data) + 
+  geom_line(aes(x=date, y=bacteria_levels)) +
+  labs(title="Bacteria Levels Over time", 
+       caption="Source: Blue Water Task Force", 
+       x = "Date",
+       y= "Bacteria Levels") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0,5000)) +
+  scale_x_date(date_breaks = "2 month", date_labels = "%b '%y", limits = as.Date(c("2021-01-01","2024-08-01")), expand = c(0, 44)) +
+  theme(axis.text.x = element_text(angle = 45))
+
+bac_plot_mean
+
+#> Graphing the bacteria charts together for comparison
+grid.arrange(bac_plot_raw, bac_plot_mean) 
+
+#> Clean Tide plot 
+tide_plot_new <- ggplot(merged_data) + 
+  geom_line(aes(x=date, y=tide_levels)) +
+  labs(title="Tide Levels Over time", 
+       caption="Source: NOAA", 
+       x = "Date",
+       y= "Tide levels (ft)") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "2 month", date_labels = "%b '%y", limits = as.Date(c("2021-01-01","2024-08-01")), expand = c(0, 44)) +
+  theme(axis.text.x = element_text(angle = 45))
+
+tide_plot_new
+
+#> Comparing the 2 tide plots we made
+grid.arrange(tide_plot_old, tide_plot_new) # looks the same to me!
+
+#> Plotting tides and bacteria together over time
+bac_plot_mean <- ggplot(merged_data, aes(x = date)) + 
+  geom_line(aes(y = bacteria_levels), color = "blue") +
+  labs(title = "Mean Bacteria and Tide Levels Over Time", 
+       x = "Month",
+       y = "Bacteria Levels") +
+  scale_y_continuous(
+    limits = c(0, 5000),
+    sec.axis = sec_axis(~ . / (5000 / 1.6), name = "Tide Levels (ft)")  # add second axis
+  ) + 
+  scale_x_date(
+    date_breaks = "2 month", 
+    date_labels = "%b '%y", 
+    limits = as.Date(c("2021-01-01","2024-08-01")), 
+    expand = c(0, 44)
+  ) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45),
+        axis.title.y = element_text(color = "blue"),
+        axis.text.y = element_text(color = "blue"), 
+        axis.title.y.right = element_text(color = "red"),
+        axis.text.y.right = element_text(color = "red"))
+
+#> Overlay the tide line with the custom scaled values
+Both_plots <- bac_plot_mean + 
+  geom_line(aes(y = tide_levels * (5000 / 1.6)), color = "red") # scale mean_tides to align with mean_bac scale
+
+Both_plots
+#ggsave("both_plots.jpeg", plot = Both_plots, width = 6, height = 4, dpi = 300)
+```
+
+# Predictive Modeling
+
+------------------------------------------------------------------------
+
+### Modeling 
+
+```{r}
+#> Normal model
+model1 <- lm(bacteria_levels ~ tide_levels, data = merged_data)
+summary(model1) # Very unconfident P Value
+
+#> Trimming
+hightrim <- mean(merged_bac_tides$mean_bac) + 2*sd(merged_bac_tides$mean_bac)
+#> Calculate # of scores 2sd over grand mean in all data
+merged_bac_tides %>%
+  summarise(highs = length(which(mean_bac>hightrim)))
+#> Filtering
+under2sd <- merged_bac_tides %>% 
+  dplyr::filter(mean_bac < hightrim)
+#>
+model_under2sd <- lm(mean_bac ~ mean_tides, data = under2sd)
+summary(model_under2sd)
+```
+
+### Q Q plot
+
+```{r}
+#> Q Q plot
+qqnorm(residuals(model1))
+```
